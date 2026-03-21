@@ -74,6 +74,8 @@ const LOCALE_MAP = {
     "worker_domain": { title: "Worker 域名", desc: "临时邮箱 Worker 的域名（不含 https://）。" },
     "email_domain": { title: "邮箱域名", desc: "临时邮箱使用的域名，如 example.com。" },
     "admin_password": { title: "邮箱管理密码", desc: "Worker 后台的管理密钥。" },
+    "site_password": { title: "邮箱站点密码", desc: "可选。若邮箱站点启用了私有访问密码，请填写此项。" },
+    "proxy_url": { title: "注册代理 URL", desc: "注册链路专用代理，例如 http://user:pass@ip:port。为空时回退使用 grok.base_proxy_url。" },
     "yescaptcha_key": { title: "YesCaptcha Key", desc: "可选。填写后优先使用 YesCaptcha。" },
     "solver_url": { title: "Solver 地址", desc: "本地 Turnstile Solver 地址，默认 http://127.0.0.1:5072。" },
     "solver_browser_type": { title: "Solver 浏览器", desc: "Solver 使用的浏览器类型：chromium / chrome / msedge / camoufox。建议使用 camoufox（对 accounts.x.ai 成功率更高）。" },
@@ -82,6 +84,8 @@ const LOCALE_MAP = {
     "default_count": { title: "默认注册数量", desc: "未填写数量时默认注册多少个，默认 100。" },
     "auto_start_solver": { title: "自动启动 Solver", desc: "注册时自动启动本地 Solver。" },
     "solver_debug": { title: "Solver 调试", desc: "启动 Solver 时开启调试日志。" },
+    "skip_birth_date_on_403": { title: "403 跳过生日步骤", desc: "当 set-birth-date 遇到 Cloudflare 403 时跳过该步骤继续后续流程（实验性容错）。" },
+    "skip_nsfw_on_403": { title: "403 跳过 NSFW 步骤", desc: "当 enable_nsfw 遇到 Cloudflare 403 时跳过该步骤继续后续流程（实验性容错）。" },
     "max_errors": { title: "最大错误数", desc: "失败次数超过阈值会自动停止注册。0 表示自动计算。"},
     "max_runtime_minutes": { title: "最长运行时间(分钟)", desc: "超过指定分钟数后自动停止注册。0 表示不限制。"}
   }

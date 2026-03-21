@@ -3,6 +3,7 @@ from __future__ import annotations
 from typing import Optional, Dict, Any
 
 from curl_cffi import requests
+from app.core.config import get_config
 
 DEFAULT_USER_AGENT = (
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
@@ -14,8 +15,13 @@ DEFAULT_USER_AGENT = (
 class NsfwSettingsService:
     """开启 NSFW 相关设置（线程安全，无全局状态）。"""
 
-    def __init__(self, cf_clearance: str = ""):
+    def __init__(self, cf_clearance: str = "", proxy_url: str = ""):
         self.cf_clearance = (cf_clearance or "").strip()
+        self.proxy_url = (
+            str(proxy_url or "").strip()
+            or str(get_config("register.proxy_url", "") or "").strip()
+            or str(get_config("grok.base_proxy_url", "") or "").strip()
+        )
 
     def enable_nsfw(
         self,
@@ -24,6 +30,7 @@ class NsfwSettingsService:
         impersonate: str,
         user_agent: Optional[str] = None,
         cf_clearance: Optional[str] = None,
+        session: Any = None,
         timeout: int = 15,
     ) -> Dict[str, Any]:
         """
@@ -80,15 +87,46 @@ class NsfwSettingsService:
             b"always_show_nsfw_content"
         )
 
-        try:
-            response = requests.post(
+        def _post_once(req_cookies: Dict[str, str]):
+            if session is not None:
+                return session.post(
+                    url,
+                    headers=headers,
+                    cookies=req_cookies,
+                    data=data,
+                    timeout=timeout,
+                )
+            return requests.post(
                 url,
                 headers=headers,
-                cookies=cookies,
+                cookies=req_cookies,
                 data=data,
                 impersonate=impersonate or "chrome120",
+                proxy=self.proxy_url or None,
                 timeout=timeout,
             )
+
+        retried = False
+        try:
+            response = _post_once(cookies)
+            # Best-effort retry when Cloudflare challenge blocks the first attempt.
+            if response.status_code == 403 and session is not None:
+                retried = True
+                try:
+                    session.get(
+                        "https://grok.com/",
+                        headers={"user-agent": headers["user-agent"]},
+                        timeout=min(timeout, 10),
+                    )
+                except Exception:
+                    pass
+
+                refreshed_clearance = str(session.cookies.get("cf_clearance") or "").strip()
+                retry_cookies = dict(cookies)
+                if refreshed_clearance:
+                    retry_cookies["cf_clearance"] = refreshed_clearance
+                response = _post_once(retry_cookies)
+
             hex_reply = response.content.hex()
             grpc_status = response.headers.get("grpc-status")
 
@@ -107,6 +145,7 @@ class NsfwSettingsService:
                 "status_code": response.status_code,
                 "grpc_status": grpc_status,
                 "error": error,
+                "retried": retried,
             }
         except Exception as e:
             return {
@@ -115,4 +154,5 @@ class NsfwSettingsService:
                 "status_code": None,
                 "grpc_status": None,
                 "error": str(e),
+                "retried": retried,
             }

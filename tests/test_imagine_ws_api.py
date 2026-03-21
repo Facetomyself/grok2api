@@ -189,3 +189,55 @@ def test_imagine_ws_stop_immediately_remains_healthy(monkeypatch: pytest.MonkeyP
     assert running.get("run_id")
     assert stopped.get("run_id") == running.get("run_id")
     assert pong == {"type": "pong"}
+
+
+def test_admin_login_falls_back_to_legacy_api_key(monkeypatch: pytest.MonkeyPatch):
+    async def _fake_legacy_keys():
+        return {"legacy-key"}
+
+    def _fake_get_config(key, default=None):
+        mapping = {
+            "app.admin_username": "admin",
+            "app.app_key": "admin",
+            "app.api_key": "",
+        }
+        return mapping.get(key, default)
+
+    monkeypatch.setattr(admin_api, "_load_legacy_api_keys", _fake_legacy_keys)
+    monkeypatch.setattr(admin_api, "get_config", _fake_get_config)
+
+    app = FastAPI()
+    app.include_router(admin_api.router)
+    client = TestClient(app)
+
+    resp = client.post("/api/v1/admin/login", json={"username": "admin", "password": "admin"})
+    assert resp.status_code == 200
+    payload = resp.json()
+    assert payload["status"] == "success"
+    assert payload["api_key"] == "legacy-key"
+
+
+def test_admin_login_prefers_configured_api_key_over_legacy(monkeypatch: pytest.MonkeyPatch):
+    async def _fake_legacy_keys():
+        return {"legacy-a", "legacy-b"}
+
+    def _fake_get_config(key, default=None):
+        mapping = {
+            "app.admin_username": "admin",
+            "app.app_key": "admin",
+            "app.api_key": "configured-key",
+        }
+        return mapping.get(key, default)
+
+    monkeypatch.setattr(admin_api, "_load_legacy_api_keys", _fake_legacy_keys)
+    monkeypatch.setattr(admin_api, "get_config", _fake_get_config)
+
+    app = FastAPI()
+    app.include_router(admin_api.router)
+    client = TestClient(app)
+
+    resp = client.post("/api/v1/admin/login", json={"username": "admin", "password": "admin"})
+    assert resp.status_code == 200
+    payload = resp.json()
+    assert payload["status"] == "success"
+    assert payload["api_key"] == "configured-key"

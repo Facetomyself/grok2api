@@ -174,6 +174,11 @@ class AutoRegisterManager:
         browser_type = str(get_config("register.solver_browser_type", "chromium") or "chromium").strip().lower()
         if browser_type not in {"chromium", "chrome", "msedge", "camoufox"}:
             browser_type = "chromium"
+        register_proxy_url = str(
+            get_config("register.proxy_url", "")
+            or get_config("grok.base_proxy_url", "")
+            or ""
+        ).strip()
 
         solver_cfg = SolverConfig(
             url=str(solver_url or "http://127.0.0.1:5072"),
@@ -181,6 +186,7 @@ class AutoRegisterManager:
             browser_type=browser_type,
             debug=solver_debug,
             auto_start=auto_start_solver,
+            proxy_url=register_proxy_url or None,
         )
         solver = TurnstileSolverProcess(solver_cfg)
         self._solver = solver
@@ -228,6 +234,7 @@ class AutoRegisterManager:
 
         def _on_error(msg: str) -> None:
             job.record_error(msg)
+            logger.warning("Auto register error: {}", msg)
             # Called from worker threads; keep it simple and thread-safe.
             with job._lock:
                 if job.status in {"starting", "running"} and job.errors >= max_errors:

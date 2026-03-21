@@ -14,6 +14,7 @@ from urllib.parse import urljoin
 from bs4 import BeautifulSoup
 from curl_cffi import requests as curl_requests
 
+from app.core.config import get_config
 from app.core.logger import logger
 from app.services.register.services import (
     EmailService,
@@ -163,8 +164,16 @@ class RegisterRunner:
     def _init_config(self) -> None:
         logger.info("Register: initializing action config...")
         start_url = f"{SITE_URL}/sign-up"
+        register_proxy_url = str(
+            get_config("register.proxy_url", "")
+            or get_config("grok.base_proxy_url", "")
+            or ""
+        ).strip()
 
-        with curl_requests.Session(impersonate=DEFAULT_IMPERSONATE) as session:
+        with curl_requests.Session(
+            impersonate=DEFAULT_IMPERSONATE,
+            proxy=register_proxy_url or None,
+        ) as session:
             html = session.get(start_url, timeout=15).text
 
             key_match = re.search(r'sitekey":"(0x4[a-zA-Z0-9_-]+)"', html)
@@ -230,14 +239,30 @@ class RegisterRunner:
         time.sleep(random.uniform(0, 5))
 
         try:
-            email_service = EmailService()
-            turnstile_service = TurnstileService()
+            register_proxy_url = str(
+                get_config("register.proxy_url", "")
+                or get_config("grok.base_proxy_url", "")
+                or ""
+            ).strip()
+            email_service = EmailService(proxy_url=register_proxy_url)
+            turnstile_service = TurnstileService(proxy_url=register_proxy_url)
             user_agreement_service = UserAgreementService()
             birth_date_service = BirthDateService()
             nsfw_service = NsfwSettingsService()
         except Exception as exc:
             self._record_error(f"service init failed: {exc}")
             return
+
+        skip_birth_on_403_raw = get_config("register.skip_birth_date_on_403", False)
+        if isinstance(skip_birth_on_403_raw, bool):
+            skip_birth_on_403 = skip_birth_on_403_raw
+        else:
+            skip_birth_on_403 = str(skip_birth_on_403_raw).strip().lower() in {"1", "true", "yes", "on"}
+        skip_nsfw_on_403_raw = get_config("register.skip_nsfw_on_403", False)
+        if isinstance(skip_nsfw_on_403_raw, bool):
+            skip_nsfw_on_403 = skip_nsfw_on_403_raw
+        else:
+            skip_nsfw_on_403 = str(skip_nsfw_on_403_raw).strip().lower() in {"1", "true", "yes", "on"}
 
         final_action_id = self._config.get("action_id")
         if not final_action_id:
@@ -248,7 +273,10 @@ class RegisterRunner:
             try:
                 impersonate_fingerprint, account_user_agent = _random_chrome_profile()
 
-                with curl_requests.Session(impersonate=impersonate_fingerprint) as session:
+                with curl_requests.Session(
+                    impersonate=impersonate_fingerprint,
+                    proxy=register_proxy_url or None,
+                ) as session:
                     try:
                         session.get(SITE_URL, timeout=10)
                     except Exception:
@@ -362,14 +390,27 @@ class RegisterRunner:
                             self._record_error("sign_up missing sso cookie")
                             break
 
+                        # Use Cloudflare clearance from the current sign-up session first,
+                        # then fallback to configured `grok.cf_clearance`.
+                        session_clearance = str(session.cookies.get("cf_clearance") or "").strip()
+                        configured_clearance = str(get_config("grok.cf_clearance", "") or "").strip()
+                        cf_clearance = session_clearance or configured_clearance
+
                         tos_result = user_agreement_service.accept_tos_version(
                             sso=sso,
                             sso_rw=sso_rw or "",
                             impersonate=impersonate_fingerprint,
                             user_agent=account_user_agent,
+                            cf_clearance=cf_clearance,
+                            session=session,
                         )
                         if not tos_result.get("ok") or not tos_result.get("hex_reply"):
-                            self._record_error(f"accept_tos failed: {tos_result.get('error') or 'unknown'}")
+                            tos_err = tos_result.get("error") or "unknown"
+                            tos_status = tos_result.get("status_code")
+                            tos_grpc = tos_result.get("grpc_status")
+                            self._record_error(
+                                f"accept_tos failed: err={tos_err} status={tos_status} grpc={tos_grpc}"
+                            )
                             break
 
                         birth_result = birth_date_service.set_birth_date(
@@ -377,22 +418,46 @@ class RegisterRunner:
                             sso_rw=sso_rw or "",
                             impersonate=impersonate_fingerprint,
                             user_agent=account_user_agent,
+                            cf_clearance=cf_clearance,
+                            session=session,
                         )
                         if not birth_result.get("ok"):
-                            self._record_error(
-                                f"set_birth_date failed: {birth_result.get('error') or 'unknown'}"
-                            )
-                            break
+                            birth_err = birth_result.get("error") or "unknown"
+                            birth_status = birth_result.get("status_code")
+                            birth_body = str(birth_result.get("response_text") or "").strip().replace("\n", " ")
+                            if len(birth_body) > 200:
+                                birth_body = birth_body[:200] + "..."
+                            if skip_birth_on_403 and int(birth_status or 0) == 403:
+                                logger.warning(
+                                    "Register: skipping birth-date on 403 (register.skip_birth_date_on_403=true)"
+                                )
+                            else:
+                                self._record_error(
+                                    f"set_birth_date failed: err={birth_err} status={birth_status} body={birth_body or '<empty>'}"
+                                )
+                                break
 
                         nsfw_result = nsfw_service.enable_nsfw(
                             sso=sso,
                             sso_rw=sso_rw or "",
                             impersonate=impersonate_fingerprint,
                             user_agent=account_user_agent,
+                            cf_clearance=cf_clearance,
+                            session=session,
                         )
                         if not nsfw_result.get("ok") or not nsfw_result.get("hex_reply"):
-                            self._record_error(f"enable_nsfw failed: {nsfw_result.get('error') or 'unknown'}")
-                            break
+                            nsfw_err = nsfw_result.get("error") or "unknown"
+                            nsfw_status = nsfw_result.get("status_code")
+                            nsfw_grpc = nsfw_result.get("grpc_status")
+                            if skip_nsfw_on_403 and int(nsfw_status or 0) == 403:
+                                logger.warning(
+                                    "Register: skipping nsfw on 403 (register.skip_nsfw_on_403=true)"
+                                )
+                            else:
+                                self._record_error(
+                                    f"enable_nsfw failed: err={nsfw_err} status={nsfw_status} grpc={nsfw_grpc}"
+                                )
+                                break
 
                         self._record_success(email, password, sso)
                         break

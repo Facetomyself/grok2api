@@ -8,7 +8,7 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 ENV PATH="$VIRTUAL_ENV/bin:$PATH"
 
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends tzdata ca-certificates \
+    && apt-get install -y --no-install-recommends tzdata ca-certificates libgtk-3-0 \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
@@ -23,6 +23,10 @@ RUN uv sync --frozen --no-dev --no-install-project --active
 # Pre-install Playwright Chromium + OS deps to make auto-register/solver usable in Docker
 # without doing `apt-get` at runtime.
 RUN python -m playwright install --with-deps chromium
+
+# Pre-fetch Camoufox runtime into the image so solver can start without
+# downloading browser payloads at container runtime.
+RUN python -m camoufox fetch
 
 COPY config.defaults.toml /app/config.defaults.toml
 COPY app /app/app

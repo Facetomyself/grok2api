@@ -19,6 +19,7 @@ class TurnstileService:
         self,
         solver_url: Optional[str] = None,
         yescaptcha_key: Optional[str] = None,
+        proxy_url: Optional[str] = None,
     ) -> None:
         self.yescaptcha_key = (
             (yescaptcha_key or get_config("register.yescaptcha_key", "") or os.getenv("YESCAPTCHA_KEY", "")).strip()
@@ -30,7 +31,21 @@ class TurnstileService:
             or "http://127.0.0.1:5072"
         ).strip()
         self.yescaptcha_api = "https://api.yescaptcha.com"
+        self.proxy_url = (
+            (
+                proxy_url
+                or get_config("register.proxy_url", "")
+                or os.getenv("REGISTER_PROXY_URL", "")
+                or get_config("grok.base_proxy_url", "")
+                or os.getenv("BASE_PROXY_URL", "")
+            ).strip()
+        )
         self.last_error: Optional[str] = None
+
+    def _proxies(self) -> dict | None:
+        if not self.proxy_url:
+            return None
+        return {"http": self.proxy_url, "https": self.proxy_url}
 
     def create_task(self, siteurl: str, sitekey: str) -> str:
         """Create a Turnstile task and return task ID."""
@@ -45,7 +60,7 @@ class TurnstileService:
                     "websiteKey": sitekey,
                 },
             }
-            response = requests.post(url, json=payload, timeout=20)
+            response = requests.post(url, json=payload, proxies=self._proxies(), timeout=20)
             response.raise_for_status()
             data = response.json()
             if data.get("errorId") != 0:
@@ -91,7 +106,7 @@ class TurnstileService:
                 if self.yescaptcha_key:
                     url = f"{self.yescaptcha_api}/getTaskResult"
                     payload = {"clientKey": self.yescaptcha_key, "taskId": task_id}
-                    response = requests.post(url, json=payload, timeout=20)
+                    response = requests.post(url, json=payload, proxies=self._proxies(), timeout=20)
                     response.raise_for_status()
                     data = response.json()
 

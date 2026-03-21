@@ -16,4 +16,6 @@ logs
 /data/*
 /data/tmp
 /data/tmp/*
+/camoufox_override
+/camoufox_override/*
 /tests

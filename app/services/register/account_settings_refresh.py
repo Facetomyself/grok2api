@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 from typing import Iterable, Any
 
+from curl_cffi import requests
 from app.core.config import get_config
 from app.core.logger import logger
 from app.services.register.services import (
@@ -90,9 +91,24 @@ def _format_step_error(result: dict, fallback: str = "unknown error") -> str:
 
 
 class AccountSettingsRefreshService:
-    def __init__(self, token_manager: TokenManager, cf_clearance: str = "") -> None:
+    def __init__(self, token_manager: TokenManager, cf_clearance: str = "", proxy_url: str = "") -> None:
         self.token_manager = token_manager
         self.cf_clearance = (cf_clearance or "").strip()
+        self.proxy_url = (proxy_url or "").strip()
+
+    @staticmethod
+    def _is_http_403(error_text: str) -> bool:
+        text = str(error_text or "").lower()
+        return "http 403" in text or "403 forbidden" in text
+
+    def _should_skip_on_403(self, step: str, error_text: str) -> bool:
+        if not self._is_http_403(error_text):
+            return False
+        if step == "birth":
+            return bool(get_config("register.skip_birth_date_on_403", True))
+        if step == "nsfw":
+            return bool(get_config("register.skip_nsfw_on_403", True))
+        return False
 
     def _apply_once(self, raw_token: str) -> tuple[bool, str, str]:
         sso, sso_rw = parse_sso_pair(raw_token)
@@ -101,33 +117,46 @@ class AccountSettingsRefreshService:
         if not sso_rw:
             sso_rw = sso
 
-        user_service = UserAgreementService(cf_clearance=self.cf_clearance)
-        birth_service = BirthDateService(cf_clearance=self.cf_clearance)
-        nsfw_service = NsfwSettingsService(cf_clearance=self.cf_clearance)
-
-        tos_result = user_service.accept_tos_version(
-            sso=sso,
-            sso_rw=sso_rw,
+        user_service = UserAgreementService(cf_clearance=self.cf_clearance, proxy_url=self.proxy_url)
+        birth_service = BirthDateService(cf_clearance=self.cf_clearance, proxy_url=self.proxy_url)
+        nsfw_service = NsfwSettingsService(cf_clearance=self.cf_clearance, proxy_url=self.proxy_url)
+        session = requests.Session(
             impersonate=DEFAULT_IMPERSONATE,
+            timeout=15,
+            proxy=self.proxy_url or None,
         )
-        if not tos_result.get("ok"):
-            return False, "tos", _format_step_error(tos_result, "accept_tos failed")
+        try:
+            tos_result = user_service.accept_tos_version(
+                sso=sso,
+                sso_rw=sso_rw,
+                impersonate=DEFAULT_IMPERSONATE,
+                session=session,
+            )
+            if not tos_result.get("ok"):
+                return False, "tos", _format_step_error(tos_result, "accept_tos failed")
 
-        birth_result = birth_service.set_birth_date(
-            sso=sso,
-            sso_rw=sso_rw,
-            impersonate=DEFAULT_IMPERSONATE,
-        )
-        if not birth_result.get("ok"):
-            return False, "birth", _format_step_error(birth_result, "set_birth_date failed")
+            birth_result = birth_service.set_birth_date(
+                sso=sso,
+                sso_rw=sso_rw,
+                impersonate=DEFAULT_IMPERSONATE,
+                session=session,
+            )
+            if not birth_result.get("ok"):
+                return False, "birth", _format_step_error(birth_result, "set_birth_date failed")
 
-        nsfw_result = nsfw_service.enable_nsfw(
-            sso=sso,
-            sso_rw=sso_rw,
-            impersonate=DEFAULT_IMPERSONATE,
-        )
-        if not nsfw_result.get("ok"):
-            return False, "nsfw", _format_step_error(nsfw_result, "enable_nsfw failed")
+            nsfw_result = nsfw_service.enable_nsfw(
+                sso=sso,
+                sso_rw=sso_rw,
+                impersonate=DEFAULT_IMPERSONATE,
+                session=session,
+            )
+            if not nsfw_result.get("ok"):
+                return False, "nsfw", _format_step_error(nsfw_result, "enable_nsfw failed")
+        finally:
+            try:
+                session.close()
+            except Exception:
+                pass
 
         return True, "", ""
 
@@ -187,6 +216,24 @@ class AccountSettingsRefreshService:
 
                     last_step = step or "unknown"
                     last_error = error or "unknown error"
+
+                if self._should_skip_on_403(last_step, last_error):
+                    logger.warning(
+                        "Account settings refresh: skipping {} on 403 for token {}...",
+                        last_step,
+                        token[:10],
+                    )
+                    await self.token_manager.mark_token_account_settings_success(
+                        token,
+                        save=False,
+                    )
+                    return {
+                        "token": token,
+                        "ok": True,
+                        "attempts": max_attempts,
+                        "skipped_step": last_step,
+                        "skip_reason": "403",
+                    }
 
                 reason = (
                     f"account_settings_refresh_failed step={last_step} "
@@ -249,7 +296,16 @@ async def refresh_account_settings_for_tokens(
 
     token_manager = await get_token_manager()
     cf_clearance = str(get_config("grok.cf_clearance", "") or "").strip()
-    service = AccountSettingsRefreshService(token_manager, cf_clearance=cf_clearance)
+    register_proxy_url = str(
+        get_config("register.proxy_url", "")
+        or get_config("grok.base_proxy_url", "")
+        or ""
+    ).strip()
+    service = AccountSettingsRefreshService(
+        token_manager,
+        cf_clearance=cf_clearance,
+        proxy_url=register_proxy_url,
+    )
     return await service.refresh_tokens(
         tokens=tokens,
         concurrency=resolved_concurrency,

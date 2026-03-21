@@ -3,6 +3,7 @@ from __future__ import annotations
 from typing import Optional, Dict, Any
 
 from curl_cffi import requests
+from app.core.config import get_config
 
 DEFAULT_USER_AGENT = (
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
@@ -14,8 +15,13 @@ DEFAULT_USER_AGENT = (
 class UserAgreementService:
     """处理账号协议同意流程（线程安全，无全局状态）。"""
 
-    def __init__(self, cf_clearance: str = ""):
+    def __init__(self, cf_clearance: str = "", proxy_url: str = ""):
         self.cf_clearance = (cf_clearance or "").strip()
+        self.proxy_url = (
+            str(proxy_url or "").strip()
+            or str(get_config("register.proxy_url", "") or "").strip()
+            or str(get_config("grok.base_proxy_url", "") or "").strip()
+        )
 
     def accept_tos_version(
         self,
@@ -24,6 +30,7 @@ class UserAgreementService:
         impersonate: str,
         user_agent: Optional[str] = None,
         cf_clearance: Optional[str] = None,
+        session: Any = None,
         timeout: int = 15,
     ) -> Dict[str, Any]:
         """
@@ -78,14 +85,24 @@ class UserAgreementService:
         )
 
         try:
-            response = requests.post(
-                url,
-                headers=headers,
-                cookies=cookies,
-                data=data,
-                impersonate=impersonate or "chrome120",
-                timeout=timeout,
-            )
+            if session is not None:
+                response = session.post(
+                    url,
+                    headers=headers,
+                    cookies=cookies,
+                    data=data,
+                    timeout=timeout,
+                )
+            else:
+                response = requests.post(
+                    url,
+                    headers=headers,
+                    cookies=cookies,
+                    data=data,
+                    impersonate=impersonate or "chrome120",
+                    proxy=self.proxy_url or None,
+                    timeout=timeout,
+                )
             hex_reply = response.content.hex()
             grpc_status = response.headers.get("grpc-status")
 

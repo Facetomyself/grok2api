@@ -31,6 +31,7 @@ class SolverConfig:
     browser_type: str = "chromium"
     debug: bool = False
     auto_start: bool = True
+    proxy_url: Optional[str] = None
 
 
 class TurnstileSolverProcess:
@@ -46,6 +47,38 @@ class TurnstileSolverProcess:
 
     def _script_path(self) -> Path:
         return self._repo_root / "scripts" / "turnstile_solver" / "api_solver.py"
+
+    @staticmethod
+    def _normalize_proxy_url(raw: str | None) -> str:
+        proxy = str(raw or "").strip()
+        if not proxy:
+            return ""
+        if "://" not in proxy:
+            proxy = f"http://{proxy}"
+        return proxy
+
+    @staticmethod
+    def _redact_proxy_url(proxy_url: str) -> str:
+        parsed = urlparse(proxy_url)
+        if not parsed.username:
+            return proxy_url
+        host = parsed.hostname or ""
+        if parsed.port:
+            host = f"{host}:{parsed.port}"
+        return f"{parsed.scheme}://{parsed.username}:***@{host}"
+
+    def _prepare_solver_proxy_file(self, script_dir: Path) -> str:
+        proxy_url = self._normalize_proxy_url(self.config.proxy_url)
+        proxy_file = script_dir / "proxies.txt"
+        if not proxy_url:
+            try:
+                if proxy_file.exists():
+                    proxy_file.unlink()
+            except Exception:
+                pass
+            return ""
+        proxy_file.write_text(proxy_url + "\n", encoding="utf-8")
+        return proxy_url
 
     def _can_import(self, python_exe: str, modules: list[str]) -> bool:
         """Check whether a python executable can import given modules."""
@@ -221,6 +254,10 @@ class TurnstileSolverProcess:
                 "--thread",
                 str(self.config.threads),
             ]
+            proxy_url = self._prepare_solver_proxy_file(script.parent)
+            if proxy_url:
+                cmd.append("--proxy")
+                logger.info("Turnstile solver proxy enabled: {}", self._redact_proxy_url(proxy_url))
             if self.config.debug:
                 cmd.append("--debug")
             cmd += ["--host", host, "--port", str(port)]

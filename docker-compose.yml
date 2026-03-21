@@ -13,9 +13,11 @@ services:
       SERVER_STORAGE_TYPE: ${SERVER_STORAGE_TYPE:-local}
       SERVER_STORAGE_URL: "${SERVER_STORAGE_URL:-}"
       STORAGE_WAIT_TIMEOUT: ${STORAGE_WAIT_TIMEOUT:-60}
+      CAMOUFOX_OVERRIDE_DIR: ${CAMOUFOX_OVERRIDE_DIR:-/app/camoufox_override}
     volumes:
       - ./data:/app/data
       - ./logs:/app/logs
+      - ${CAMOUFOX_OVERRIDE_HOST_DIR:-./camoufox_override}:/app/camoufox_override:ro
     shm_size: "1gb"
     init: true
     restart: unless-stopped
