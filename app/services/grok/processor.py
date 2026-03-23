@@ -11,6 +11,7 @@ from typing import Any, AsyncGenerator, Optional, AsyncIterable, List
 from app.core.config import get_config
 from app.core.logger import logger
 from app.services.grok.assets import DownloadService
+from app.services.grok.openai_usage import estimate_chat_usage
 
 
 ASSET_URL = "https://assets.grok.com/"
@@ -82,7 +83,7 @@ class BaseProcessor:
             return f"{self.app_url.rstrip('/')}{local_path}"
         return local_path
             
-    def _sse(self, content: str = "", role: str = None, finish: str = None) -> str:
+    def _sse(self, content: str = "", role: str = None, finish: str = None, usage: dict | None = None) -> str:
         """构建 SSE 响应 (StreamProcessor 通用)"""
         if not hasattr(self, 'response_id'):
             self.response_id = None
@@ -104,13 +105,15 @@ class BaseProcessor:
             "system_fingerprint": self.fingerprint if hasattr(self, 'fingerprint') else "",
             "choices": [{"index": 0, "delta": delta, "logprobs": None, "finish_reason": finish}]
         }
+        if usage is not None:
+            chunk["usage"] = usage
         return f"data: {orjson.dumps(chunk).decode()}\n\n"
 
 
 class StreamProcessor(BaseProcessor):
     """流式响应处理器"""
     
-    def __init__(self, model: str, token: str = "", think: bool = None):
+    def __init__(self, model: str, token: str = "", think: bool = None, prompt_tokens: int = 0):
         super().__init__(model, token)
         self.response_id: Optional[str] = None
         self.fingerprint: str = ""
@@ -123,6 +126,8 @@ class StreamProcessor(BaseProcessor):
             self.show_think = get_config("grok.thinking", False)
         else:
             self.show_think = think
+        self.prompt_tokens = max(0, int(prompt_tokens or 0))
+        self._completion_parts: list[str] = []
     
     async def process(self, response: AsyncIterable[bytes]) -> AsyncGenerator[str, None]:
         """处理流式响应"""
@@ -191,6 +196,7 @@ class StreamProcessor(BaseProcessor):
                 # 普通 token
                 if (token := resp.get("token")) is not None:
                     if token and not (self.filter_tags and any(t in token for t in self.filter_tags)):
+                        self._completion_parts.append(token)
                         yield self._sse(token)
                         
             if self.think_opened:
@@ -207,9 +213,10 @@ class StreamProcessor(BaseProcessor):
 class CollectProcessor(BaseProcessor):
     """非流式响应处理器"""
     
-    def __init__(self, model: str, token: str = ""):
+    def __init__(self, model: str, token: str = "", prompt_tokens: int = 0):
         super().__init__(model, token)
         self.image_format = get_config("app.image_format", "url")
+        self.prompt_tokens = max(0, int(prompt_tokens or 0))
     
     async def process(self, response: AsyncIterable[bytes]) -> dict[str, Any]:
         """处理并收集完整响应"""
@@ -272,11 +279,10 @@ class CollectProcessor(BaseProcessor):
                 "message": {"role": "assistant", "content": content, "refusal": None, "annotations": []},
                 "finish_reason": "stop"
             }],
-            "usage": {
-                "prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0,
-                "prompt_tokens_details": {"cached_tokens": 0, "text_tokens": 0, "audio_tokens": 0, "image_tokens": 0},
-                "completion_tokens_details": {"text_tokens": 0, "audio_tokens": 0, "reasoning_tokens": 0}
-            }
+            "usage": estimate_chat_usage(
+                prompt_tokens=self.prompt_tokens,
+                content=content,
+            )
         }
 
 

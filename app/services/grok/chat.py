@@ -22,6 +22,7 @@ from app.services.grok.statsig import StatsigService
 from app.services.grok.model import ModelService
 from app.services.grok.assets import UploadService
 from app.services.grok.processor import StreamProcessor, CollectProcessor
+from app.services.grok.openai_usage import estimate_prompt_tokens
 from app.services.grok.retry import retry_on_status
 from app.services.token import get_token_manager
 from app.services.request_stats import request_stats
@@ -436,7 +437,8 @@ class GrokChatService:
             image_attachments=image_ids
         )
         
-        return response, stream, request.model
+        prompt_tokens = estimate_prompt_tokens(message)
+        return response, stream, request.model, prompt_tokens
 
 
 # ==================== Chat 业务服务 ====================
@@ -512,7 +514,7 @@ class ChatService:
         # 请求 Grok
         service = GrokChatService()
         try:
-            response, _, model_name = await service.chat_openai(token, chat_request)
+            response, _, model_name, prompt_tokens = await service.chat_openai(token, chat_request)
         except AppException:
             try:
                 await request_stats.record_request(model, success=False)
@@ -532,7 +534,7 @@ class ChatService:
         
         # 处理响应
         if is_stream:
-            processor = StreamProcessor(model_name, token, think).process(response)
+            processor = StreamProcessor(model_name, token, think, prompt_tokens=prompt_tokens).process(response)
 
             async def _wrapped_stream():
                 completed = False
@@ -553,7 +555,7 @@ class ChatService:
 
             return _wrapped_stream()
 
-        result = await CollectProcessor(model_name, token).process(response)
+        result = await CollectProcessor(model_name, token, prompt_tokens=prompt_tokens).process(response)
         try:
             await token_mgr.sync_usage(token, model_name, consume_on_fail=True, is_usage=True)
             await request_stats.record_request(model_name, success=True)
