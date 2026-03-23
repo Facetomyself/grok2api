@@ -48,7 +48,7 @@ def _format_json(record) -> str:
             record["exception"].traceback
         ))
     
-    return json.dumps(log_entry, ensure_ascii=False)
+    return json.dumps(log_entry, ensure_ascii=False, default=str)
 
 
 def _make_json_sink(output):
