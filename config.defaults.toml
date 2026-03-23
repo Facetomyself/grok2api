@@ -61,3 +61,7 @@ skip_birth_date_on_403 = true
 skip_nsfw_on_403 = true
 max_errors = 0
 max_runtime_minutes = 0
+
+[log]
+# 是否记录健康检查请求
+log_health_requests = false

@@ -69,6 +69,10 @@ const LOCALE_MAP = {
     "assets_delete_batch_size": { title: "资产清理批量", desc: "在线资产删除单批并发数量。推荐 10。" },
     "admin_assets_batch_size": { title: "管理端批量", desc: "管理端在线资产统计/清理批量并发数量。推荐 10。" }
   },
+  "log": {
+    "label": "日志配置",
+    "log_health_requests": { title: "记录健康检查", desc: "是否记录 /health 健康检查请求。" }
+  },
   "register": {
     "label": "自动注册",
     "worker_domain": { title: "Worker 域名", desc: "临时邮箱 Worker 的域名（不含 https://）。" },
