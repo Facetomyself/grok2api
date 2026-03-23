@@ -71,7 +71,9 @@ const LOCALE_MAP = {
   },
   "log": {
     "label": "日志配置",
-    "log_health_requests": { title: "记录健康检查", desc: "是否记录 /health 健康检查请求。" }
+    "log_health_requests": { title: "记录健康检查", desc: "是否记录 /health 健康检查请求。" },
+    "log_all_requests": { title: "记录全部请求", desc: "开启后记录所有请求；关闭时仅记录慢请求、异常请求和错误请求。" },
+    "request_slow_ms": { title: "慢请求阈值", desc: "请求耗时超过该值（毫秒）时会写入日志。" }
   },
   "register": {
     "label": "自动注册",
