@@ -16,6 +16,7 @@ from app.services.grok.statsig import StatsigService
 from app.services.grok.model import ModelService
 from app.services.token import get_token_manager
 from app.services.grok.processor import VideoStreamProcessor, VideoCollectProcessor
+from app.services.grok.openai_usage import estimate_prompt_tokens
 from app.services.request_stats import request_stats
 
 # API 端点
@@ -456,6 +457,8 @@ class VideoService:
             finally:
                 await upload_service.close()
         
+        prompt_tokens = estimate_prompt_tokens(prompt)
+
         # 生成视频
         service = VideoService()
         
@@ -480,7 +483,7 @@ class VideoService:
         
         # 处理响应
         if is_stream:
-            processor = VideoStreamProcessor(model, token, think).process(response)
+            processor = VideoStreamProcessor(model, token, think, prompt_tokens=prompt_tokens).process(response)
 
             async def _wrapped_stream():
                 completed = False
@@ -500,7 +503,7 @@ class VideoService:
 
             return _wrapped_stream()
 
-        result = await VideoCollectProcessor(model, token).process(response)
+        result = await VideoCollectProcessor(model, token, prompt_tokens=prompt_tokens).process(response)
         try:
             await token_mgr.sync_usage(token, model, consume_on_fail=True, is_usage=True)
             await request_stats.record_request(model, success=True)
