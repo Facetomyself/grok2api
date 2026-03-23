@@ -22,7 +22,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi import Depends
 
 from app.core.auth import verify_api_key
-from app.core.config import get_config
+from app.core.config import config, get_config
 from app.core.logger import logger, setup_logging
 from app.core.exceptions import register_exception_handlers
 from app.core.response_middleware import ResponseLoggerMiddleware
@@ -52,9 +52,7 @@ async def lifespan(app: FastAPI):
     await asyncio.to_thread(migrate_legacy_cache_dirs)
 
     # 1. 加载配置（内部会自动合并 defaults + 兼容 setting.toml）
-    from app.core.config import config
-
-    await config.load()
+    await config.ensure_loaded()
 
     # 1.1 Old account post-migration settings (TOS + BirthDate + NSFW), best-effort
     async def _run_legacy_account_migration():
@@ -123,6 +121,11 @@ def create_app() -> FastAPI:
 
     # 请求日志和 ID 中间件
     app.add_middleware(ResponseLoggerMiddleware)
+
+    @app.middleware("http")
+    async def ensure_config_loaded(request: Request, call_next):
+        await config.ensure_loaded()
+        return await call_next(request)
 
     # 注册异常处理器
     register_exception_handlers(app)
