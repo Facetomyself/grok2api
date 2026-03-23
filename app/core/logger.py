@@ -8,6 +8,10 @@ import traceback
 from pathlib import Path
 from loguru import logger
 
+# Provide logging.Logger compatibility for legacy calls
+if not hasattr(logger, "isEnabledFor"):
+    logger.isEnabledFor = lambda _level: True
+
 # 日志目录
 LOG_DIR = Path(__file__).parent.parent.parent / "logs"
 LOG_DIR.mkdir(parents=True, exist_ok=True)
