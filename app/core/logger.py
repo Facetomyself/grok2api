@@ -87,6 +87,8 @@ def setup_logging(
             level=level,
             format="{message}",
             colorize=False,
+            backtrace=False,
+            diagnose=False,
         )
     else:
         logger.add(
@@ -94,6 +96,8 @@ def setup_logging(
             level=level,
             format="<green>{time:YYYY-MM-DD HH:mm:ss}</green> | <level>{level: <8}</level> | <cyan>{file.name}:{line}</cyan> - <level>{message}</level>",
             colorize=True,
+            backtrace=False,
+            diagnose=False,
         )
     
     # 文件输出
@@ -103,6 +107,8 @@ def setup_logging(
             level=level,
             format="{message}",
             enqueue=True,
+            backtrace=False,
+            diagnose=False,
         )
     
     return logger
